@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   validateConfig,
+  deepMerge,
   normalizeEnforcement,
   resolvePresetName,
   type RouterConfig,
@@ -257,6 +258,39 @@ describe("normalizeEnforcement", () => {
   it("passes through an explicit mode", () => {
     expect(normalizeEnforcement({ mode: "enforced" })).toEqual({ mode: "enforced" });
     expect(normalizeEnforcement({ mode: "advisory" })).toEqual({ mode: "advisory" });
+  });
+});
+
+describe("validateConfig — interim grader temperature policy", () => {
+  const withPolicy = (policy: unknown) => validRaw({ enforcement: { verify: { graderTemperaturePolicy: policy } } });
+
+  it.each([
+    null, [], "auto", 0, true,
+    { default: "unsupported" }, { default: null }, { default: [] },
+    { providers: [] }, { providers: null }, { providers: "allow" },
+    { models: [] }, { models: null }, { models: 1 },
+    { providers: { openai: "yes" } }, { providers: { openai: null } },
+    { models: { "openai/model": false } }, { models: { "openai/model": {} } },
+  ])("rejects malformed policy %j", (policy) => {
+    expect(() => validateConfig(withPolicy(policy))).toThrow(/enforcement\.verify\.graderTemperaturePolicy/);
+  });
+
+  it.each(["auto", "allow", "deny"])("accepts %s at every level", (mode) => {
+    const policy = { default: mode, providers: { openai: mode }, models: { "openai/model": mode } };
+    expect(validateConfig(withPolicy(policy)).enforcement?.verify).toMatchObject({ graderTemperaturePolicy: policy });
+  });
+
+  it("accepts empty policy and maps", () => {
+    expect(() => validateConfig(withPolicy({}))).not.toThrow();
+    expect(() => validateConfig(withPolicy({ providers: {}, models: {} }))).not.toThrow();
+  });
+
+  it("deep-merges policy maps without replacing siblings", () => {
+    const base = withPolicy({ default: "auto", providers: { openai: "deny" }, models: { "openai/a": "deny", "openai/b": "auto" } });
+    const merged = deepMerge(base, { enforcement: { verify: { graderTemperaturePolicy: { providers: { compatible: "allow" }, models: { "openai/a": "allow" } } } } });
+    expect(validateConfig(merged).enforcement?.verify).toMatchObject({ graderTemperaturePolicy: {
+      default: "auto", providers: { openai: "deny", compatible: "allow" }, models: { "openai/a": "allow", "openai/b": "auto" },
+    } });
   });
 });
 

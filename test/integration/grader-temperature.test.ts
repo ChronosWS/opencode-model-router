@@ -67,4 +67,13 @@ describe("grader temperature hook", () => {
 
     await expect(captureGraderParams()).resolves.toHaveProperty("temperature", 0);
   });
+
+  it("keeps nonzero V1 temperature regardless of the V2 deny policy", async () => {
+    const cfg = loadConfig();
+    cfg.enforcement ??= {};
+    cfg.enforcement.verify ??= {};
+    Object.assign(cfg.enforcement.verify, { graderTemperature: 0.65, graderTemperaturePolicy: { default: "deny" } });
+
+    await expect(captureGraderParams()).resolves.toHaveProperty("temperature", 0.65);
+  });
 });

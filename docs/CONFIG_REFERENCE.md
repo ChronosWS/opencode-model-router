@@ -186,7 +186,8 @@ may contain instruction text or paths.
 | `requireExplicitDoD` | `boolean` | `false` | When `true`, a task with no explicit Definition of Done is treated as failing verification. |
 | `preferDeterministic` | `boolean` | _(auto)_ | Defaults to `true` whenever the DoD contains runnable checks; omit to let the router decide. |
 | `graderPolicy` | `"atLeastProducerTier"` | `"atLeastProducerTier"` | **Only valid value.** Grader tier = `max(producerTier, minGraderTier)` along the ladder; never below the producer. A deterministic check uses no grader. |
-| `graderTemperature` | `number` | `0` | Applied via the `chat.params` hook to grader sessions only. |
+| `graderTemperature` | `number` | `0` | Applied via the `chat.params` hook to grader sessions only; V2 additionally filters it through `graderTemperaturePolicy`. |
+| `graderTemperaturePolicy` | `{ default?: "auto" \| "allow" \| "deny", providers?: Record<string, "auto" \| "allow" \| "deny">, models?: Record<string, "auto" \| "allow" \| "deny"> }` | `{ "default": "auto" }` | Interim V2-only router policy pending upstream capability metadata. Exact `providerID/modelID` beats provider, then default, then implicit auto. Allow preserves temperature; deny removes it. Auto omits unsupported and unknown models; explicit auto never inherits broader allow. Maps deep-merge. See [V2 policy details](OPENCODE_V2.md#child-sessions-cancellation-and-verification). |
 | `minGraderTier` | `string \| null` | `null` | Optional floor for the grader tier, independent of producer. `null` means no floor and is identical to omitting the key. |
 | `delegateTimeoutMs` | `integer ≥ 1` | `600000` (10 min) | Ceiling for **one** producer `session.prompt` turn in the `delegate` tool. Each ladder attempt gets its own budget. On expiry the child session is aborted and deleted, the attempt is recorded as failed with `producer failed: …`, and the ladder advances — the delegation never fabricates a pass. |
 | `graderTimeoutMs` | `integer ≥ 1` | tier-dependent | Explicit override wins over grader-tier defaults: fast `60000`, medium `180000`, heavy/custom `600000` ms, defined in `GRADER_TIMEOUT_MS_BY_TIER` in `src/verify/timeout.ts`. Timeout produces `unverifiable`; the grader is aborted and deleted. |
@@ -568,6 +569,7 @@ Evaluated by `resolveEnforcementMode` on every dispatch.
 | `guard.blockSelfScript` and `guard.deliverableFirst` must each be a boolean. |
 | `verify.minGraderTier` must be a string or `null`. |
 | `verify.graderTemperature` must be a number ≥ 0. |
+| `verify.graderTemperaturePolicy` and its optional `providers`/`models` maps must be objects (not null or arrays); optional `default` and every map value must be `"auto"`, `"allow"`, or `"deny"`. |
 | `verify.requireExplicitDoD` must be a boolean. |
 | `verify.delegateTimeoutMs`, `verify.graderTimeoutMs`, `verify.gateBudgetMs`, `verify.baselineTimeoutMs`, `verify.recheckTimeoutMs` and `verify.pendingTtlMs` must each be an integer ≥ 1 (milliseconds). `0` and negatives are rejected, not read as "no timeout". |
 | `verify.maxWorkers` and `verify.maxConcurrentVerifications` must each be an integer ≥ 1. |
@@ -931,6 +933,7 @@ pins this: it resolves the real policies from the shipped file and from the same
 | `guard.blockScriptWrites` | `false` | `src/guard/enforce.ts` |
 | `verify.minGraderTier` | `null` | `src/verify/wiring.ts` |
 | `verify.graderTemperature` | `0` | `src/index.ts` (`chat.params` hook, grader sessions only) |
+| `verify.graderTemperaturePolicy` | `{ "default": "auto" }` | `src/compat/v2-hooks.ts` — V2-only filter; absent policy also means auto |
 | `verify.requireExplicitDoD` | `false` | `src/router/protocol.ts` |
 | `verify.delegateTimeoutMs` | `600000` | `src/index.ts` (`delegate` producer prompt) |
 | `verify.graderTimeoutMs` | fast `60000` / medium `180000` / heavy/custom `600000` | `src/verify/timeout.ts` (`graderTimeoutMs`), consumed by `dispatchGrader` |

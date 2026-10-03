@@ -15,6 +15,7 @@
     "verify": {
       "minGraderTier": null,
       "graderTemperature": 0,
+      "graderTemperaturePolicy": { "default": "auto" },
       "requireExplicitDoD": false,
       "delegateTimeoutMs": 600000,
       "graderTimeoutMs": 60000

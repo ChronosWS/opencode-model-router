@@ -7,10 +7,27 @@ import type { V2Runtime } from "./v2-client";
 import { V2_GRADER_AGENT } from "./v2-client";
 import { isAbsolute, resolve } from "node:path";
 import { loadConfig } from "../router/config";
+import type { GraderTemperatureMode, GraderTemperaturePolicy } from "../router/config";
 import { getActiveTiers } from "../router/protocol";
 import { resolveSubagentOverrides } from "../router/subagents";
 import { stripDelegateInstructions } from "../router/instructions";
 import { GRADER_SYSTEM } from "../verify/checker";
+
+// Interim exact-model evidence only; do not infer support from model families,
+// provider names, or reasoning flags. Unknown models conservatively omit it.
+const GRADER_TEMPERATURE_CAPABILITIES = new Map<string, boolean>([
+  ["openai/gpt-6-luna-fast", false],
+]);
+
+function allowsGraderTemperature(providerID: string, modelID: string, policy?: GraderTemperaturePolicy): boolean {
+  const model = `${providerID}/${modelID}`;
+  const entry = (entries: Record<string, GraderTemperatureMode> | undefined, key: string) =>
+    entries && Object.hasOwn(entries, key) ? entries[key] : undefined;
+  const mode = entry(policy?.models, model) ?? entry(policy?.providers, providerID) ?? policy?.default ?? "auto";
+  if (mode === "allow") return true;
+  if (mode === "deny") return false;
+  return GRADER_TEMPERATURE_CAPABILITIES.get(model) ?? false;
+}
 
 /** Translate the router's own v1 tool vocabulary at the v2 boundary. */
 export function v2Instructions(text: string): string {
@@ -126,7 +143,6 @@ export async function registerV2Hooks(
         agent.hidden = true;
         agent.description = "Model router verification grader";
         agent.system = GRADER_SYSTEM;
-        agent.request.settings.temperature = loadConfig().enforcement?.verify?.graderTemperature ?? 0;
       });
       for (const [name, definition] of Object.entries(config.agent)) {
         if (originals.get(name) === JSON.stringify(definition)) continue;
@@ -206,6 +222,10 @@ export async function registerV2Hooks(
     registrations.push(await ctx.session.hook("context", async (event) => {
       const input = { sessionID: event.sessionID, agent: event.agent, model: { ...event.model, modelID: event.model.id } };
       await legacy["chat.params"]?.(input, event.options);
+      // Filter only V2 graders, after the shared hook supplies the configured value.
+      if (event.agent === V2_GRADER_AGENT && !allowsGraderTemperature(
+        event.model.providerID, event.model.id, loadConfig().enforcement?.verify?.graderTemperaturePolicy,
+      )) delete event.options.temperature;
       const original = new Map<string, SystemPart[]>();
       for (const part of event.system) {
         const copies = original.get(part.text) ?? [];

@@ -312,10 +312,69 @@ describe("OpenCode 2 hook adapter", () => {
     await expect(f.toolHooks["execute.before"]({ ...read, id: "next", input: { path: "another.ts" } })).rejects.toThrow();
   });
 
-  it("defines grader instructions and temperature independently of source-instance session state", async () => {
+  it("defines grader instructions without a temperature setting independently of source-instance session state", async () => {
     const f = fixture();
     await f.start({}, { withToolContext: (_: any, run: any) => run(), applyChildSystem: vi.fn() });
-    expect(f.agents[V2_GRADER_AGENT]).toMatchObject({ mode: "subagent", hidden: true, system: GRADER_SYSTEM, request: { settings: { temperature: 0 } } });
+    expect(f.agents[V2_GRADER_AGENT]).toMatchObject({ mode: "subagent", hidden: true, system: GRADER_SYSTEM });
+    expect(f.agents[V2_GRADER_AGENT].request.settings).not.toHaveProperty("temperature");
+  });
+
+  it("removes grader temperature supplied by the legacy params hook without losing other options", async () => {
+    const f = fixture();
+    const params = vi.fn(async (_input: unknown, output: { temperature?: number }) => { output.temperature = 0; });
+    await f.start({ "chat.params": params });
+    const event = { ...call, agent: V2_GRADER_AGENT, model: { providerID: "openai", id: "gpt-6-luna-fast" }, options: { temperature: 0.7, maxOutputTokens: 500 }, system: [] };
+    await f.sessionHooks.context(event);
+    expect(params).toHaveBeenCalledOnce();
+    expect(event.options).not.toHaveProperty("temperature");
+    expect(event.options).toEqual({ maxOutputTokens: 500 });
+  });
+
+  describe("interim grader temperature policy", () => {
+    type Mode = "auto" | "allow" | "deny";
+    type Policy = { default?: Mode; providers?: Record<string, Mode>; models?: Record<string, Mode> };
+    const cases: Array<{ name: string; policy?: Policy; model?: string; retain: boolean }> = [
+      { name: "implicit auto omits unknown models", retain: false },
+      { name: "empty policy is auto", policy: {}, retain: false },
+      { name: "default allow", policy: { default: "allow" }, retain: true },
+      { name: "default deny", policy: { default: "deny" }, retain: false },
+      { name: "provider allow beats default deny", policy: { default: "deny", providers: { openai: "allow" } }, retain: true },
+      { name: "provider deny beats default allow", policy: { default: "allow", providers: { openai: "deny" } }, retain: false },
+      { name: "model allow beats provider and default deny", policy: { default: "deny", providers: { openai: "deny" }, models: { "openai/unknown": "allow" } }, retain: true },
+      { name: "model deny beats provider and default allow", policy: { default: "allow", providers: { openai: "allow" }, models: { "openai/unknown": "deny" } }, retain: false },
+      { name: "model auto does not inherit allow", policy: { default: "allow", providers: { openai: "allow" }, models: { "openai/unknown": "auto" } }, retain: false },
+      { name: "provider auto does not inherit allow", policy: { default: "allow", providers: { openai: "auto" } }, retain: false },
+      { name: "auto denies the evidenced model", policy: { default: "auto" }, model: "gpt-6-luna-fast", retain: false },
+      { name: "explicit allow overrides evidenced unsupported capability", policy: { models: { "openai/gpt-6-luna-fast": "allow" } }, model: "gpt-6-luna-fast", retain: true },
+      { name: "auto omits unknown models", policy: { default: "auto" }, retain: false },
+      { name: "model entries are exact, not prefixes", policy: { models: { "openai/unknown": "allow" } }, model: "unknown-suffix", retain: false },
+      { name: "model entries preserve multi-segment IDs", policy: { models: { "openai/org/model": "allow" } }, model: "org/model", retain: true },
+      { name: "other provider and model entries do not match", policy: { providers: { other: "allow" }, models: { "other/unknown": "allow" } }, retain: false },
+    ];
+
+    it.each(cases.flatMap(test => [0, 0.65].map(temperature => ({ ...test, temperature }))))("$name at $temperature", async ({ policy, model, retain, temperature }) => {
+      const cfg = loadConfig();
+      cfg.enforcement ??= {};
+      cfg.enforcement.verify ??= {};
+      Object.assign(cfg.enforcement.verify, { graderTemperaturePolicy: policy });
+      const f = fixture();
+      await f.start({ "chat.params": async (_input: unknown, output: { temperature?: number }) => { output.temperature = temperature; } });
+      const event = { ...call, agent: V2_GRADER_AGENT, model: { providerID: "openai", id: model ?? "unknown" }, options: { maxOutputTokens: 500 }, system: [] };
+      await f.sessionHooks.context(event);
+      expect(event.options).toEqual(retain ? { maxOutputTokens: 500, temperature } : { maxOutputTokens: 500 });
+    });
+
+    it("does not alter non-grader options even under deny", async () => {
+      const cfg = loadConfig();
+      cfg.enforcement ??= {};
+      cfg.enforcement.verify ??= {};
+      Object.assign(cfg.enforcement.verify, { graderTemperaturePolicy: { default: "deny" } });
+      const f = fixture();
+      await f.start();
+      const event = { ...call, model: { providerID: "openai", id: "gpt-6-luna-fast" }, options: { temperature: 0.65, maxOutputTokens: 500 }, system: [] };
+      await f.sessionHooks.context(event);
+      expect(event.options).toEqual({ temperature: 0.65, maxOutputTokens: 500 });
+    });
   });
 
   it("strips attributed nested instructions on children while preserving identical explicit user text and attachments", async () => {

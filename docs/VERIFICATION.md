@@ -294,7 +294,7 @@ Builds a skeptical grading prompt from the DoD criteria + assembled artefact and
 
 - Structural producer ≠ grader guarantee, plus a defensive sessionID-inequality check.
 - Grader tier = `atLeastProducerTier(producer)`, raised to `verify.minGraderTier`, never below the producer.
-- Grader temperature pinned via a `chat.params` hook (default `0`).
+- Grader temperature supplied via a `chat.params` hook (default `0`). V1 retains it unchanged. V2 applies the interim router-owned `graderTemperaturePolicy`: exact model, then provider, then default/implicit `auto`. `allow` retains it; `deny` removes it; `auto` omits unsupported and unknown models pending upstream capability metadata. Explicit `auto` does not inherit broader allow. See [V2 policy details](OPENCODE_V2.md#child-sessions-cancellation-and-verification).
 - Prompt is anti-rubber-stamp: cite evidence per criterion, default to FAIL on any uncertainty, no benefit of the doubt.
 - Grader must return strict one-line JSON `{"pass":boolean,"reasons":[...]}` — unparseable response → FAIL.
 - All artefact text, file paths, declared outputs, and grader reasons are scrubbed before reaching or leaving the grader.
@@ -346,6 +346,7 @@ An absolute check path bypasses the base directory entirely, and the failure rea
 | `graderPolicy` | `"atLeastProducerTier"` | — |
 | `minGraderTier` | — | Floor on grader tier regardless of producer |
 | `graderTemperature` | `0` | — |
+| `graderTemperaturePolicy` | `{ "default": "auto" }` | V2 only: optional `default`, `providers`, and exact `models` maps select `auto`, `allow`, or `deny`; V1 ignores this policy |
 | `requireExplicitDoD` | `false` | Mode A: `true` = demand explicit block, no inference |
 | `delegateTimeoutMs` | `600000` | Producer turn ceiling — see [Time-boxes](#time-boxes) |
 | `graderTimeoutMs` | `60000` | Grader turn ceiling |

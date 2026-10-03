@@ -119,12 +119,23 @@ export interface ModeConfig {
   overrideRules?: string[];
 }
 
+export type GraderTemperatureMode = "auto" | "allow" | "deny";
+
+/** Interim V2-only policy until upstream exposes temperature capabilities. */
+export interface GraderTemperaturePolicy {
+  default?: GraderTemperatureMode;
+  providers?: Record<string, GraderTemperatureMode>;
+  models?: Record<string, GraderTemperatureMode>;
+}
+
 export interface EnforcementConfig {
   mode?: "off" | "advisory" | "enforced";
   envGate?: string;
   perTier?: Record<string, "off" | "advisory" | "enforced">;
   guard?: { readDraftCap?: number; sameOpRetryCap?: number; blockSelfScript?: boolean; deliverableFirst?: boolean; budget?: number; blockScriptWrites?: boolean };
   verify?: { require?: "never" | "whenDoDPresent" | "always"; requireExplicitDoD?: boolean; preferDeterministic?: boolean; graderPolicy?: "atLeastProducerTier"; graderTemperature?: number; minGraderTier?: string | null;
+    /** V2 only: exact model, then provider, then default; implicit auto omits unknowns. */
+    graderTemperaturePolicy?: GraderTemperaturePolicy;
     /** Ceiling for one producer `session.prompt` turn, in ms. Default 600000. */
     delegateTimeoutMs?: number;
     /** Reject unavailable verification. Default false; never escalates it. */
@@ -778,6 +789,25 @@ function validateEnforcement(obj: Record<string, unknown>): void {
           throw new Error(
             "tiers.json: enforcement.verify.graderTemperature must be a number >= 0",
           );
+        }
+      }
+      if (verify.graderTemperaturePolicy !== undefined) {
+        const policy = verify.graderTemperaturePolicy;
+        const field = "tiers.json: enforcement.verify.graderTemperaturePolicy";
+        if (!isPlainObject(policy)) throw new Error(`${field} must be an object`);
+        const validateMode = (value: unknown, path: string) => {
+          if (value !== "auto" && value !== "allow" && value !== "deny") {
+            throw new Error(`${path} must be "auto", "allow", or "deny"`);
+          }
+        };
+        if (policy.default !== undefined) validateMode(policy.default, `${field}.default`);
+        for (const key of ["providers", "models"] as const) {
+          const entries = policy[key];
+          if (entries === undefined) continue;
+          if (!isPlainObject(entries)) throw new Error(`${field}.${key} must be an object`);
+          for (const [name, value] of Object.entries(entries)) {
+            validateMode(value, `${field}.${key}.${name}`);
+          }
         }
       }
       // Time-box ceilings. `>= 1` and not `>= 0`: a 0 or negative budget is
